@@ -1,0 +1,534 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3DS Roblox Multiplayer</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.5.1/socket.io.min.js"></script>
+    <style>
+        body { margin: 0; font-family: Arial, sans-serif; background: #1a1a1a; color: #fff; overflow: hidden; }
+        #title-screen, #loading-screen { 
+            position: absolute; 
+            top: 0; 
+            left: 0; 
+            width: 100%; 
+            height: 100vh; 
+            display: flex; 
+            flex-direction: column; 
+            justify-content: center; 
+            align-items: center; 
+            background: linear-gradient(#4a4a4a, #2a2a2a); 
+            z-index: 1000; 
+        }
+        #title-screen h1, #loading-screen p { 
+            font-size: 36px; 
+            text-shadow: 2px 2px 4px #000; 
+            margin: 0 0 20px 0; 
+        }
+        #join-btn { 
+            padding: 15px 40px; 
+            font-size: 24px; 
+            background: #00aaff; 
+            border: none; 
+            border-radius: 10px; 
+            color: #fff; 
+            cursor: pointer; 
+        }
+        #join-btn:hover { 
+            background: #0077cc; 
+        }
+        #container { 
+            display: none; 
+            flex-direction: column; 
+            align-items: center; 
+            height: 100vh; 
+        }
+        #top-screen { 
+            width: 400px; 
+            height: 240px; 
+            position: relative; 
+            background: #000; 
+            border: 5px solid #333; 
+            border-radius: 10px; 
+            overflow: hidden; 
+        }
+        #stereo-left, #stereo-right { 
+            position: absolute; 
+            width: 100%; 
+            height: 100%; 
+            opacity: 0.5; 
+        }
+        #bottom-screen { 
+            width: 320px; 
+            height: 240px; 
+            background: linear-gradient(#4a4a4a, #2a2a2a); 
+            border: 5px solid #333; 
+            border-radius: 10px; 
+            margin-top: 10px; 
+            display: flex; 
+            flex-direction: column; 
+            padding: 10px; 
+        }
+        .control-btn { 
+            width: 80px; 
+            height: 40px; 
+            margin: 5px; 
+            background: #00aaff; 
+            border: none; 
+            border-radius: 5px; 
+            color: #fff; 
+            font-size: 16px; 
+            cursor: pointer; 
+        }
+        .control-btn:hover { 
+            background: #0077cc; 
+        }
+        #chat-area { 
+            flex-grow: 1; 
+            background: #111; 
+            border-radius: 5px; 
+            padding: 5px; 
+            overflow-y: auto; 
+            font-size: 12px; 
+        }
+        #chat-input-container { 
+            display: flex; 
+            margin-top: 5px; 
+        }
+        #chat-input { 
+            flex-grow: 1; 
+            height: 30px; 
+            background: #222; 
+            color: #fff; 
+            border: 1px solid #444; 
+            border-radius: 5px; 
+            padding: 5px; 
+        }
+        #send-btn { 
+            width: 60px; 
+            height: 30px; 
+            margin-left: 5px; 
+            background: #00aaff; 
+            border: none; 
+            border-radius: 5px; 
+            color: #fff; 
+            font-size: 14px; 
+            cursor: pointer; 
+        }
+        #send-btn:hover { 
+            background: #0077cc; 
+        }
+        #inventory { 
+            font-size: 12px; 
+            margin-top: 5px; 
+        }
+        #player-list { 
+            font-size: 12px; 
+            margin-top: 5px; 
+        }
+        #instructions { 
+            font-size: 12px; 
+            text-align: center; 
+            margin-top: 10px; 
+        }
+    </style>
+</head>
+<body>
+    <div id="title-screen">
+        <h1>Welcome to GoBlocks.Beta!</h1>
+        <button id="join-btn">Join</button>
+    </div>
+    <div id="loading-screen" style="display: none;">
+        <p>Loading guest_7s data....</p>
+    </div>
+    <div id="container">
+        <div id="top-screen">
+            <canvas id="stereo-left"></canvas>
+            <canvas id="stereo-right"></canvas>
+        </div>
+        <div id="bottom-screen">
+            <div style="display: flex; flex-wrap: wrap; justify-content: center;">
+                <button class="control-btn" onclick="jump()">Jump</button>
+                <button class="control-btn" onclick="switchTool('build')">Build</button>
+                <button class="control-btn" onclick="switchTool('remove')">Remove</button>
+                <button class="control-btn" onclick="interact()">Interact</button>
+            </div>
+            <div id="chat-area"></div>
+            <div id="chat-input-container">
+                <input id="chat-input" type="text" placeholder="Type to chat...">
+                <button id="send-btn">Send</button>
+            </div>
+            <div id="inventory">Inventory: Coins: 0</div>
+            <div id="player-list">Players: 1</div>
+        </div>
+        <div id="instructions">WASD: Move, Space: Jump, Click: Place/Remove Block, E: Interact, Type and press Enter or click Send to chat</div>
+    </div>
+    <script>
+        const socket = io('http://localhost:3000');
+        let playerId;
+
+        // Screen management
+        const titleScreen = document.getElementById('title-screen');
+        const loadingScreen = document.getElementById('loading-screen');
+        const container = document.getElementById('container');
+        const joinBtn = document.getElementById('join-btn');
+
+        joinBtn.addEventListener('click', () => {
+            titleScreen.style.display = 'none';
+            loadingScreen.style.display = 'flex';
+            setTimeout(() => {
+                loadingScreen.style.display = 'none';
+                container.style.display = 'flex';
+                animate();
+            }, 3000);
+        });
+
+        // Scenes
+        const mainScene = new THREE.Scene();
+        const interiorScene = new THREE.Scene();
+        let currentScene = mainScene;
+
+        // Cameras and renderers
+        const cameraLeft = new THREE.PerspectiveCamera(75, 400 / 240, 0.1, 1000);
+        const cameraRight = new THREE.PerspectiveCamera(75, 400 / 240, 0.1, 1000);
+        const rendererLeft = new THREE.WebGLRenderer({ canvas: document.getElementById('stereo-left') });
+        const rendererRight = new THREE.WebGLRenderer({ canvas: document.getElementById('stereo-right') });
+        rendererLeft.setSize(400, 240);
+        rendererRight.setSize(400, 240);
+        const stereoOffset = 0.1;
+
+        // Avatar creation function
+        function createAvatar(color) {
+            const avatar = new THREE.Group();
+            const body = new THREE.Mesh(new THREE.BoxGeometry(1, 2, 0.5), new THREE.MeshBasicMaterial({ color }));
+            const head = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.5), new THREE.MeshBasicMaterial({ color: 0xffff00 }));
+            const armL = new THREE.Mesh(new THREE.BoxGeometry(0.3, 1, 0.3), new THREE.MeshBasicMaterial({ color: 0x0000ff }));
+            const armR = new THREE.Mesh(new THREE.BoxGeometry(0.3, 1, 0.3), new THREE.MeshBasicMaterial({ color: 0x0000ff }));
+            const legL = new THREE.Mesh(new THREE.BoxGeometry(0.3, 1, 0.3), new THREE.MeshBasicMaterial({ color: 0xff0000 }));
+            const legR = new THREE.Mesh(new THREE.BoxGeometry(0.3, 1, 0.3), new THREE.MeshBasicMaterial({ color: 0xff0000 }));
+            head.position.set(0, 1.25, 0);
+            armL.position.set(0.65, 0.5, 0);
+            armR.position.set(-0.65, 0.5, 0);
+            legL.position.set(0.35, -1, 0);
+            legR.position.set(-0.35, -1, 0);
+            avatar.add(body, head, armL, armR, legL, legR);
+            return avatar;
+        }
+
+        // Local avatar
+        const avatar = createAvatar(0x00ff00);
+        avatar.position.set(0, 1, 0);
+        mainScene.add(avatar);
+
+        // Other players
+        const otherPlayers = {};
+
+        // Ground
+        const ground = new THREE.Mesh(new THREE.PlaneGeometry(20, 20), new THREE.MeshBasicMaterial({ color: 0x888888 }));
+        ground.rotation.x = -Math.PI / 2;
+        mainScene.add(ground);
+        const interiorGround = new THREE.Mesh(new THREE.PlaneGeometry(10, 10), new THREE.MeshBasicMaterial({ color: 0x555555 }));
+        interiorGround.rotation.x = -Math.PI / 2;
+        interiorScene.add(interiorGround);
+
+        // Houses
+        const houses = [];
+        const house = new THREE.Group();
+        const walls = new THREE.Mesh(new THREE.BoxGeometry(4, 2, 4), new THREE.MeshBasicMaterial({ color: 0xaaaaaa }));
+        const roof = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.5, 4.2), new THREE.MeshBasicMaterial({ color: 0xff0000 }));
+        const door = new THREE.Mesh(new THREE.BoxGeometry(1, 1.5, 0.2), new THREE.MeshBasicMaterial({ color: 0x654321 }));
+        roof.position.y = 1.25;
+        door.position.set(0, 0.75, 2.1);
+        house.add(walls, roof, door);
+        house.position.set(5, 1, 5);
+        house.userData = { isDoor: door, interiorPos: new THREE.Vector3(0, 1, 0) };
+        mainScene.add(house);
+        houses.push(house);
+
+        // Interior furniture
+        const table = new THREE.Mesh(new THREE.BoxGeometry(1, 0.8, 1), new THREE.MeshBasicMaterial({ color: 0x654321 }));
+        table.position.set(0, 0.4, 0);
+        interiorScene.add(table);
+
+        // Collectibles
+        const collectibles = {};
+
+        // NPCs
+        const npcs = {};
+
+        // Function to create a sign
+        function createSign(text, position) {
+            const canvas = document.createElement('canvas');
+            canvas.width = 256;
+            canvas.height = 64;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#ffffff';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = '#000000';
+            ctx.font = '20px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+            const texture = new THREE.CanvasTexture(canvas);
+            const material = new THREE.MeshBasicMaterial({ map: texture, transparent: true });
+            const geometry = new THREE.PlaneGeometry(2, 0.5);
+            const sign = new THREE.Mesh(geometry, material);
+            sign.position.y = 1.5;
+            return sign;
+        }
+
+        // Controls
+        const keys = { w: false, a: false, s: false, d: false, e: false, space: false };
+        document.addEventListener('keydown', (e) => {
+            if (container.style.display !== 'flex') return;
+            if (e.key === 'w') keys.w = true;
+            if (e.key === 'a') keys.a = true;
+            if (e.key === 's') keys.s = true;
+            if (e.key === 'd') keys.d = true;
+            if (e.key === 'e') keys.e = true;
+            if (e.key === ' ') keys.space = true;
+            socket.emit('move', keys);
+        });
+        document.addEventListener('keyup', (e) => {
+            if (e.key === 'w') keys.w = false;
+            if (e.key === 'a') keys.a = false;
+            if (e.key === 's') keys.s = false;
+            if (e.key === 'd') keys.d = false;
+            if (e.key === 'e') keys.e = false;
+            if (e.key === ' ') keys.space = false;
+            socket.emit('move', keys);
+        });
+
+        // Chat
+        const chatArea = document.getElementById('chat-area');
+        const chatInput = document.getElementById('chat-input');
+        const sendBtn = document.getElementById('send-btn');
+
+        function handleChatInput() {
+            const message = chatInput.value.trim();
+            if (message) {
+                socket.emit('chat', message);
+                chatInput.value = '';
+            }
+        }
+
+        chatInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') handleChatInput();
+        });
+
+        sendBtn.addEventListener('click', handleChatInput);
+
+        // Socket events
+        socket.on('playerData', (data) => {
+            playerId = data.id;
+            // Initialize players
+            for (const id in data.players) {
+                if (id !== playerId) {
+                    otherPlayers[id] = createAvatar(new THREE.Color(data.players[id].color.r, data.players[id].color.g, data.players[id].color.b));
+                    otherPlayers[id].position.set(data.players[id].position.x, data.players[id].position.y, data.players[id].position.z);
+                    mainScene.add(otherPlayers[id]);
+                }
+            }
+            // Initialize blocks
+            data.blocks.forEach(block => {
+                const blockMesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial({ color: 0x00aaff }));
+                blockMesh.position.set(block.position.x, block.position.y, block.position.z);
+                blockMesh.userData = { id: block.id };
+                mainScene.add(blockMesh);
+            });
+            // Initialize NPCs
+            data.npcs.forEach(npc => {
+                npcs[npc.id] = new THREE.Group();
+                const npcBody = new THREE.Mesh(new THREE.BoxGeometry(1, 2, 0.5), new THREE.MeshBasicMaterial({ color: npc.id === 'alice' ? 0xff00ff : 0x00ffff }));
+                const npcHead = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.5), new THREE.MeshBasicMaterial({ color: npc.id === 'alice' ? 0x00ffff : 0xff00ff }));
+                npcHead.position.set(0, 1.25, 0);
+                npcs[npc.id].add(npcBody, npcHead, createSign('buggy not that good', new THREE.Vector3(0, 0, 0)));
+                npcs[npc.id].position.set(npc.position.x, npc.position.y, npc.position.z);
+                npcs[npc.id].userData = npc;
+                mainScene.add(npcs[npc.id]);
+            });
+            // Initialize collectibles
+            data.collectibles.forEach(c => {
+                const coin = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.3, 0.3), new THREE.MeshBasicMaterial({ color: 0xffff00 }));
+                coin.position.set(c.position.x, c.position.y, c.position.z);
+                coin.userData = { id: c.id };
+                interiorScene.add(coin);
+                collectibles[c.id] = coin;
+            });
+        });
+
+        socket.on('playerJoined', (player) => {
+            otherPlayers[player.id] = createAvatar(new THREE.Color(player.color.r, player.color.g, player.color.b));
+            otherPlayers[player.id].position.set(player.position.x, player.position.y, player.position.z);
+            mainScene.add(otherPlayers[player.id]);
+            updatePlayerList();
+        });
+
+        socket.on('playerLeft', (id) => {
+            mainScene.remove(otherPlayers[id]);
+            delete otherPlayers[id];
+            updatePlayerList();
+        });
+
+        socket.on('update', (data) => {
+            // Update players
+            for (const id in data.players) {
+                if (id !== playerId && otherPlayers[id]) {
+                    const target = data.players[id].position;
+                    const current = otherPlayers[id].position;
+                    current.lerp(new THREE.Vector3(target.x, target.y, target.z), 0.1); // Interpolate
+                }
+            }
+            // Update NPCs
+            data.npcs.forEach(npc => {
+                if (npcs[npc.id]) {
+                    npcs[npc.id].position.set(npc.position.x, npc.position.y, npc.position.z);
+                }
+            });
+            avatar.position.copy(data.players[playerId].position);
+        });
+
+        socket.on('chat', (data) => {
+            chatArea.innerHTML += `<div>${data.playerId}: ${data.message}</div>`;
+            if (data.npcResponse) {
+                chatArea.innerHTML += `<div>${data.npcResponse.npc}: ${data.npcResponse.response}</div>`;
+            }
+            chatArea.scrollTop = chatArea.scrollHeight;
+        });
+
+        socket.on('build', (data) => {
+            if (data.action === 'place') {
+                const block = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial({ color: 0x00aaff }));
+                block.position.set(data.block.position.x, data.block.position.y, data.block.position.z);
+                block.userData = { id: data.block.id };
+                mainScene.add(block);
+            } else if (data.action === 'remove') {
+                const block = mainScene.children.find(obj => obj.userData.id === data.id);
+                if (block) mainScene.remove(block);
+            }
+        });
+
+        socket.on('collect', (data) => {
+            if (collectibles[data.collectibleId]) {
+                interiorScene.remove(collectibles[data.collectibleId]);
+                delete collectibles[data.collectibleId];
+            }
+            if (data.playerId === playerId) {
+                document.getElementById('inventory').textContent = `Inventory: Coins: ${data.inventory.coins}`;
+            }
+        });
+
+        // Player list
+        function updatePlayerList() {
+            const count = Object.keys(otherPlayers).length + 1;
+            document.getElementById('player-list').textContent = `Players: ${count}`;
+        }
+
+        // Building
+        let currentTool = 'build';
+        function switchTool(tool) {
+            currentTool = tool;
+        }
+
+        document.getElementById('top-screen').addEventListener('click', () => {
+            if (container.style.display !== 'flex') return;
+            const raycaster = new THREE.Raycaster();
+            const mouse = new THREE.Vector2(0, 0);
+            raycaster.setFromCamera(mouse, cameraLeft);
+            const intersects = raycaster.intersectObjects(currentScene.children);
+            if (intersects.length > 0) {
+                const point = intersects[0].point;
+                if (currentTool === 'build') {
+                    socket.emit('build', { action: 'place', position: { x: Math.round(point.x), y: Math.round(point.y) + 0.5, z: Math.round(point.z) } });
+                } else if (currentTool === 'remove') {
+                    const block = intersects[0].object;
+                    if (block.userData.id) {
+                        socket.emit('build', { action: 'remove', id: block.userData.id });
+                    }
+                }
+            }
+        });
+
+        // Interact
+        function interact() {
+            for (const house of houses) {
+                const door = house.userData.isDoor;
+                const distance = avatar.position.distanceTo(door.getWorldPosition(new THREE.Vector3()));
+                if (distance < 1.5) {
+                    currentScene = interiorScene;
+                    avatar.position.copy(house.userData.interiorPos);
+                    return;
+                }
+            }
+            if (currentScene === interiorScene && avatar.position.distanceTo(new THREE.Vector3(0, 1, 2)) < 1.5) {
+                currentScene = mainScene;
+                avatar.position.set(5, 1, 7);
+            }
+            // Check collectibles
+            for (const id in collectibles) {
+                if (currentScene === interiorScene && avatar.position.distanceTo(collectibles[id].position) < 0.5) {
+                    socket.emit('collect', id);
+                }
+            }
+        }
+
+        function jump() {
+            keys.space = true;
+            socket.emit('move', keys);
+        }
+
+        // Animation loop
+        function animate() {
+            requestAnimationFrame(animate);
+            if (keys.e) interact();
+            // Update cameras
+            cameraLeft.position.set(avatar.position.x - stereoOffset, avatar.position.y + 2, avatar.position.z + 5);
+            cameraRight.position.set(avatar.position.x + stereoOffset, avatar.position.y + 2, avatar.position.z + 5);
+            cameraLeft.lookAt(avatar.position);
+            cameraRight.lookAt(avatar.position);
+            rendererLeft.render(currentScene, cameraLeft);
+            rendererRight.render(currentScene, cameraRight);
+        }
+    </script>
+</body>
+</html>
